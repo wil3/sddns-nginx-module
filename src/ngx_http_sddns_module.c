@@ -20,24 +20,12 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-static void *
-ngx_http_sddns_create_srv_conf(ngx_conf_t *cf);
-static char *
-ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
-static char *
-ngx_http_sddns(ngx_conf_t *cf, ngx_command_t *comd, void *conf);
-static ngx_int_t
-ngx_http_sddns_init(ngx_conf_t *cf); 
-static ngx_int_t
-ngx_http_sddns_access_handler(ngx_http_request_t *r);
-static u_long
-ngx_http_sddns_addr(ngx_http_request_t *r);
-
-static ngx_str_t target_cookie = ngx_string("secret");
 
 typedef struct {
     ngx_str_t                  		secret;
 	ngx_str_t				   		cookie_name;
+	ngx_str_t				   		controller_name;
+
 //	ngx_http_sddns_client_ctx_t		client_ctx;
     ngx_rbtree_t              rbtree;
     ngx_rbtree_node_t         sentinel;
@@ -58,12 +46,39 @@ typedef struct {
     u_char                   *name;
 } ngx_http_sddns_client_node_t;
 
+static void *
+ngx_http_sddns_create_srv_conf(ngx_conf_t *cf);
+static char *
+ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
+static char *
+ngx_http_sddns(ngx_conf_t *cf, ngx_command_t *comd, void *conf);
+static ngx_int_t
+ngx_http_sddns_init(ngx_conf_t *cf); 
+static ngx_int_t
+ngx_http_sddns_access_handler(ngx_http_request_t *r);
+static u_long
+ngx_http_sddns_addr(ngx_http_request_t *r);
+static ngx_table_elt_t *
+search_headers_in(ngx_http_request_t *r, u_char *name, size_t len); 
+
+static ngx_int_t
+ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+
+
+static ngx_str_t ORIGIN_HEADER = ngx_string("origin");
+
 static ngx_command_t  ngx_http_sddns_commands[] = {
     { ngx_string("sddns"),
       NGX_HTTP_SRV_CONF|NGX_CONF_NOARGS,
       ngx_http_sddns,
 	  0,
 	  0,
+      NULL },
+    { ngx_string("sddns_controller_name"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, controller_name),
       NULL },
 
     { ngx_string("sddns_secret"),
@@ -265,27 +280,52 @@ ngx_http_sddns_init(ngx_conf_t *cf)
 static ngx_int_t
 ngx_http_sddns_access_handler(ngx_http_request_t *r)
 {
-
-	ngx_http_sddns_client_node_t *cn;
-	ngx_http_sddns_srv_conf_t *sc;
-	ngx_int_t               n;  
-    ngx_table_elt_t        	**cookies;
-	ngx_str_t				cookie_value;
-    //ngx_str_node_t       *node;
-    uint32_t              	hash;
+	ngx_http_sddns_srv_conf_t 		*sc;
+	ngx_table_elt_t *		origin_header;
 
 
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Handler");
 
+
 	sc = ngx_http_get_module_srv_conf(r, ngx_http_sddns_module);
+
+	origin_header = search_headers_in(r, ORIGIN_HEADER.data, ORIGIN_HEADER.len);
+	//ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS after search");
+
+	/* Comming from controller */
+	if ((origin_header != NULL) && ngx_strcasecmp(origin_header->value.data, sc->controller_name.data) == 0){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from controller");
+		return 0;
+	/* From a client */
+	} else {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from client");
+		return ngx_http_sddns_client_handler(r, sc);
+	}
+
+}
+
+static ngx_int_t
+ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
+{
+
+	ngx_http_sddns_client_node_t 	*cn;
+	ngx_int_t               		n;  
+    ngx_table_elt_t        			**cookies;
+	ngx_str_t						cookie_value;
+    uint32_t              			hash;
 
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 				  "SDDNS cookie name \"%V\"",
 				  &sc->cookie_name);
 
+
+
+
+	/*  We first need to look to see if this is a normal client request or
+	 *  if it is an update being pushed from the server */
 	// From the headers get the cookie and place in cookie_value
     n = ngx_http_parse_multi_header_lines(&r->headers_in.cookies,
-                                          &target_cookie, &cookie_value );
+                                          &sc->cookie_name, &cookie_value );
 	//If the cookie cannot be found
     if (n == NGX_DECLINED) {
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS return %i", n);
@@ -336,8 +376,8 @@ ngx_http_sddns_access_handler(ngx_http_request_t *r)
 
 	ngx_http_sddns_addr(r);
 	return 0;
-}
 
+}
 
 static u_long
 ngx_http_sddns_addr(ngx_http_request_t *r)
@@ -486,3 +526,53 @@ ngx_http_sddns_rbtree_insert_value(ngx_rbtree_node_t *temp,
     ngx_rbt_red(node);
 }
 */
+
+static ngx_table_elt_t *
+search_headers_in(ngx_http_request_t *r, u_char *name, size_t len) {
+    ngx_list_part_t            *part;
+    ngx_table_elt_t            *h;
+    ngx_uint_t                  i;
+
+    /*
+    Get the first part of the list. There is usual only one part.
+    */
+    part = &r->headers_in.headers.part;
+    h = part->elts;
+
+    /*
+    Headers list array may consist of more than one part,
+    so loop through all of it
+    */
+    for (i = 0; /* void */ ; i++) {
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                /* The last part, search is done. */
+                break;
+            }
+
+            part = part->next;
+            h = part->elts;
+            i = 0;
+        }
+
+        /*
+        Just compare the lengths and then the names case insensitively.
+        */
+        if (len != h[i].key.len || ngx_strcasecmp(name, h[i].key.data) != 0) {
+            /* This header doesn't match. */
+            continue;
+        }
+
+        /*
+        Ta-da, we got one!
+        Note, we'v stop the search at the first matched header
+        while more then one header may fit.
+        */
+        return &h[i];
+    }
+
+    /*
+    No headers was found
+    */
+    return NULL;
+}
