@@ -19,6 +19,9 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
+
 
 
 typedef struct {
@@ -64,6 +67,12 @@ search_headers_in(ngx_http_request_t *r, u_char *name, size_t len);
 static ngx_int_t
 ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
 
+static ngx_int_t
+ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+
+
+static ngx_str_t
+ngx_http_sddns_create_request_string(ngx_http_request_t *r);
 
 static ngx_str_t ORIGIN_HEADER = ngx_string("origin");
 
@@ -295,13 +304,140 @@ ngx_http_sddns_access_handler(ngx_http_request_t *r)
 	/* Comming from controller */
 	if ((origin_header != NULL) && ngx_strcasecmp(origin_header->value.data, sc->controller_name.data) == 0){
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from controller");
-		return 0;
+		return ngx_http_sddns_controller_handler(r, sc);
 	/* From a client */
 	} else {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from client");
 		return ngx_http_sddns_client_handler(r, sc);
 	}
 
+}
+static ngx_int_t
+ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
+{
+	/* Verify request is actually from controller */
+
+	/*  Insert client data */
+	ngx_str_t						clientid_value;
+	ngx_str_t						clientip_value;
+    uint32_t              			hash;
+	ngx_http_sddns_client_node_t 	*cn;
+	ngx_table_elt_t					*auth_header;
+	ngx_str_t 						sig_str;
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "SDDNS parsing arguments");
+
+
+    if (r->args.len) {
+
+        if (ngx_http_arg(r, (u_char *) "id", 2, &clientid_value) == NGX_OK) {
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						  "SDDNS clientid=%V",
+						  &clientid_value);
+		}
+        if (ngx_http_arg(r, (u_char *) "ip", 2, &clientip_value) == NGX_OK) {
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						  "SDDNS clientip=%V",
+						  &clientip_value);
+		}
+	}
+
+
+	auth_header = r->headers_in.authorization;
+
+	if (auth_header == NULL){
+
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "SDDNS no auth header");
+
+		return NGX_OK;
+
+	} else {
+
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					  "SDDNS authentication=%V",
+					  &auth_header->value);
+	}
+	
+
+	sig_str = ngx_http_sddns_create_request_string(r);
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				  "SDDNS signature string=%V",
+				  &sig_str);
+
+	ngx_str_t base64, hmac;
+	base64.len = ngx_base64_encoded_length(32);
+	base64.data = ngx_palloc(r->pool, base64.len);
+
+	if (base64.data == NULL) {
+
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "SDDNS base64 fail");
+
+	}
+
+	u_char *bin;
+	ngx_str_t key = ngx_string("Hi There");
+	ngx_str_t data = ngx_string("Hi There");
+	bin = HMAC(EVP_sha256(), key.data, key.len, data.data, data.len, NULL, NULL);
+
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "SDDNS hmac ok");
+
+
+	hmac.len = 32;
+	hmac.data = bin;
+
+	ngx_encode_base64(&base64, &hmac); 
+
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				  "SDDNS hmac=\"%V\"",
+				  &base64);
+
+    hash = ngx_crc32_long(clientid_value.data, clientid_value.len);
+
+	
+	cn = (ngx_http_sddns_client_node_t *) ngx_str_rbtree_lookup(&sc->rbtree, &clientid_value, hash);
+
+	if (cn){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS this ID is already set");
+	} else {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS not id found");
+	}
+
+	cn = ngx_palloc(r->pool, sizeof(ngx_http_sddns_client_node_t));
+	if (cn == NULL){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS problem allocating struct");
+	}
+	
+
+    cn->sn.node.key = hash;
+	cn->sn.str.len = clientid_value.len;
+	cn->sn.str.data = clientid_value.data;
+	cn->client_id = clientid_value;
+
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "SDDNS inserting new client");
+	ngx_rbtree_insert(&sc->rbtree, &cn->sn.node);
+
+	return NGX_OK;
+}
+
+/*  Copy from AWS http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html */
+static ngx_str_t
+ngx_http_sddns_create_request_string(ngx_http_request_t *r)
+{
+	ngx_str_t buff;
+
+	buff.len =  r->method_name.len + r->args.len;
+	buff.data = ngx_pnalloc(r->pool, buff.len);
+	if (buff.data == NULL){
+		//return NULL;
+	}
+
+	ngx_sprintf(buff.data, "%V%V", &r->method_name,  &r->args);
+
+	return buff;
 }
 
 static ngx_int_t
@@ -527,6 +663,7 @@ ngx_http_sddns_rbtree_insert_value(ngx_rbtree_node_t *temp,
 }
 */
 
+//https://www.nginx.com/resources/wiki/start/topics/examples/headers_management/
 static ngx_table_elt_t *
 search_headers_in(ngx_http_request_t *r, u_char *name, size_t len) {
     ngx_list_part_t            *part;
@@ -576,3 +713,5 @@ search_headers_in(ngx_http_request_t *r, u_char *name, size_t len) {
     */
     return NULL;
 }
+
+
