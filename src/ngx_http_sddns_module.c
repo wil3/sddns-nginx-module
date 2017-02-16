@@ -15,76 +15,19 @@
  *
  * =====================================================================================
  */
+#ifndef DDEBUG
+#define DDEBUG 1 
+#endif
+#include "ddebug.h"
 
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include "ngx_http_sddns_module.h"
 
-
-
-typedef struct {
-    ngx_str_t                  		enc_secret;
-    ngx_str_t                  		sign_secret;
-	ngx_str_t				   		cookie_name;
-	ngx_str_t				   		controller_name;
-    ngx_flag_t     					ctrl_request;
-	ngx_list_t						*allowed;
-	ngx_pool_t                      *pool;
-} ngx_http_sddns_srv_conf_t;
-
-
-typedef struct {
-    ngx_str_t                 client_id;
-    ngx_str_t                 address;
-} ngx_http_sddns_client_node_t;
-
-static void *
-ngx_http_sddns_create_srv_conf(ngx_conf_t *cf);
-
-static char *
-ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
-
-static char *
-ngx_http_sddns(ngx_conf_t *cf, ngx_command_t *comd, void *conf);
-
-static ngx_int_t
-ngx_http_sddns_init(ngx_conf_t *cf); 
-
-static ngx_int_t
-ngx_http_sddns_access_handler(ngx_http_request_t *r);
-
-static u_long
-ngx_http_sddns_addr(ngx_http_request_t *r);
-
-static ngx_table_elt_t *
-ngx_http_sddns_search_headers_in(ngx_http_request_t *r, u_char *name, size_t len); 
-
-static ngx_int_t
-ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
-
-static ngx_int_t
-ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
-
-
-static ngx_str_t
-ngx_http_sddns_create_request_string(ngx_http_request_t *r);
-
-static ngx_int_t
-ngx_http_sddns_is_authorized(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
-
-static ngx_http_sddns_client_node_t * 
-ngx_http_sddns_insert_client(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *r, ngx_list_t *list, ngx_str_t id, ngx_str_t ip);
-
-ngx_http_sddns_client_node_t*
-ngx_http_sddns_get_client_by_id(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *r, ngx_list_t *list, ngx_str_t id);
-
-static ngx_int_t
-ngx_http_sddns_content_handler(ngx_http_request_t *r);
-
-static ngx_http_sddns_client_node_t * 
-ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt, ngx_str_t ip);
 
 static ngx_str_t ORIGIN_HEADER = ngx_string("origin");
 
@@ -120,6 +63,14 @@ static ngx_command_t  ngx_http_sddns_commands[] = {
       NGX_HTTP_SRV_CONF_OFFSET,
       offsetof(ngx_http_sddns_srv_conf_t, cookie_name),
       NULL },
+	/*  If the app is using JS then we need to inject JS so ajax calls are made to the changing domain 
+    { ngx_string("sddns_js_support"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, cookie_name),
+      NULL },
+	  */
 
       ngx_null_command
 };
@@ -432,7 +383,7 @@ ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t
 
 
 
-ngx_http_sddns_client_node_t*
+static ngx_http_sddns_client_node_t*
 ngx_http_sddns_get_client_by_id(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *r, ngx_list_t *list, ngx_str_t id){
 
     ngx_uint_t        				i;
@@ -580,8 +531,14 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
                                           &sc->cookie_name, &cookie_id );
 	//If the cookie cannot be found
     if (n == NGX_DECLINED) {
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS return %i", n);
-        return 0;
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS No cookie found");
+		u_long ip;
+		ip = ngx_http_sddns_addr(r);
+		dd("Clients IP address %lu", ip);
+
+		ngx_http_sddns_create_client_token(r->pool, sc->enc_secret, ip); 
+
+        return NGX_OK;
     }
 	cookies = r->headers_in.cookies.elts;
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -604,7 +561,6 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 				  "SDDNS ID retrieved \"%V\"",
 				  &cn->client_id);
 
-		ngx_http_sddns_addr(r);
 	//	if (ngx_strncmp(clientip_value.data, cn->address.data, cn->address.len) == 0){
 
 
@@ -612,7 +568,8 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 
 	} else {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS not id found");
-		return NGX_HTTP_UNAUTHORIZED;
+
+		return NGX_OK;
 	}
 
 
@@ -623,12 +580,12 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 static u_long
 ngx_http_sddns_addr(ngx_http_request_t *r)
 {
-    size_t                  len;
+ //   size_t                  len;
     ngx_addr_t           addr;
     //ngx_array_t         *xfwd;
-    //struct sockaddr_in  *sin;
-    u_char                 *p;
-    u_char                  text[NGX_SOCKADDR_STRLEN];
+    struct sockaddr_in  *sin;
+//    u_char                 *p;
+//    u_char                  text[NGX_SOCKADDR_STRLEN];
 
 
     addr.sockaddr = r->connection->sockaddr;
@@ -664,28 +621,32 @@ ngx_http_sddns_addr(ngx_http_request_t *r)
         return INADDR_NONE;
     }
 
-    //sin = (struct sockaddr_in *) addr.sockaddr;
+    sin = (struct sockaddr_in *) addr.sockaddr;
+
+/*  
     len = ngx_sock_ntop(addr.sockaddr, addr.socklen, text,
                         NGX_SOCKADDR_STRLEN, 0);
 
     if (len == 0) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
+
     p = ngx_palloc(r->pool, len);
     if (p == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+	ip.len = len;
+	ip.data = p;
     ngx_memcpy(p, text, len);
 
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 				  "SDDNS ip address \"%s\"",
 				  p);
-
-    //return ntohl(sin->sin_addr.s_addr);
+*/
+    return ntohl(sin->sin_addr.s_addr);
 	//
 
-	return INADDR_NONE;
 }
 
 
@@ -741,3 +702,170 @@ ngx_http_sddns_search_headers_in(ngx_http_request_t *r, u_char *name, size_t len
 }
 
 
+static ngx_int_t
+ngx_http_sddns_create_client_token(ngx_pool_t *pool, ngx_str_t key, u_long ip){
+	//ngx_str_t	id;
+	//ngx_str_t	iv;
+	ngx_str_t	plaintext;
+	u_char		*iv;
+	u_char		*id;
+	int 		id_len = 8;
+	int			iv_len = 12;
+	int			tag_len = 16;
+	u_char		tag[tag_len];
+	u_char		*p;
+	u_char		ip_buf[32];
+	
+
+	dd("Create token");
+	/*  Gen session ID */
+	id = ngx_pnalloc(pool, id_len);
+	if (id == NULL){
+		return NGX_ERROR;
+	}
+	//s->data = p;
+  	if (!RAND_bytes(id, id_len)){
+		return NGX_ERROR;
+	}
+	/*  
+	if (!ngx_http_sddns_get_rand_bytes(pool, id, 8)){
+		return NGX_ERROR;
+	}
+	*/
+	dd("Session ID");
+	print_hex(pool, id, id_len/2);
+
+/*  
+	if (!ngx_http_sddns_get_rand_bytes(pool, iv, 12)){
+		return NGX_ERROR;
+	}
+	*/
+
+	iv = ngx_pnalloc(pool, iv_len);
+	if (iv == NULL){
+		return NGX_ERROR;
+	}
+	//s->data = p;
+  	if (!RAND_bytes(iv, iv_len)){
+		return NGX_ERROR;
+	}
+
+
+	dd("IV");
+	print_hex(pool, iv, iv_len/2);
+
+	u_char *s_ip = (u_char *)&ip;
+	ngx_memcpy(ip_buf, (u_char *)&ip, sizeof(ip));
+
+	plaintext.len = 32 + id_len;
+	plaintext.data = ngx_palloc(pool, plaintext.len);
+	if (plaintext.data == NULL){
+		return NGX_ERROR;
+	}
+	p = ngx_copy(plaintext.data, s_ip, 32);
+	ngx_memcpy(p, id, id_len);
+
+	dd("Plaintext");
+    print_hex(plaintext);
+
+	u_char		ct[plaintext.len];
+	ngx_http_sddns_encrypt(plaintext.data, plaintext.len, key.data, iv, iv_len, ct, tag, tag_len); 
+
+
+	dd("Ciphertext");
+	print_hex(pool, ct, plaintext.len/2);
+	return 0;
+}
+
+static char *base36enc(u_char *value)
+{
+
+
+	char base36[36] = "0123456789abcdefghijklmnopqrstuvwxyz";
+	/* log(2**64) / log(36) = 12.38 => max 13 char + '\0' */
+
+	char buffer[14];
+	unsigned int offset = sizeof(buffer);
+
+	buffer[--offset] = '\0';
+	do {
+		buffer[--offset] = base36[value % 36];
+	} while (value /= 36);
+
+	return strdup(&buffer[offset]); // warning: this must be free-d by the user
+}
+
+void
+print_hex(ngx_pool_t *pool, u_char *b, int len){
+
+	u_char * buf;
+	buf = ngx_pnalloc(pool, len);
+	(void)ngx_hex_dump(buf, b, len);
+	dd("%s", buf);
+}
+
+/*  
+static ngx_int_t 
+ngx_http_sddns_get_rand_bytes(ngx_pool_t *pool, u_char *buf, int len){
+    //u_char                    *p;
+	//s->len = len;
+	buf = ngx_pnalloc(pool, len);
+	if (buf == NULL){
+		return NGX_ERROR;
+	}
+	//s->data = p;
+  	return  RAND_bytes(buf, len);	
+}
+*/
+
+int ngx_http_sddns_encrypt(unsigned char *plaintext, int plaintext_len,  unsigned char *key, unsigned char *iv, int iv_len,
+	unsigned char *ciphertext, unsigned char *tag, int tag_len)
+{
+	EVP_CIPHER_CTX *ctx;
+
+	int len;
+
+	int ciphertext_len;
+
+
+	/* Create and initialise the context */
+	if(!(ctx = EVP_CIPHER_CTX_new())) 
+		return NGX_ERROR;
+
+	/* Initialise the encryption operation. */
+	if(1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL))
+		return NGX_ERROR;
+
+	/* Set IV length if default 12 bytes (96 bits) is not appropriate */
+	if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, iv_len, NULL))
+		return NGX_ERROR;
+
+	/*  Set tag length */
+	EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, tag_len, NULL);
+
+	/* Initialise key and IV */
+	if(1 != EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv)) return NGX_ERROR;
+
+
+	/* Provide the message to be encrypted, and obtain the encrypted output.
+	 * EVP_EncryptUpdate can be called multiple times if necessary
+	 */
+	if(1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len))
+		return NGX_ERROR;
+	ciphertext_len = len;
+
+	/* Finalise the encryption. Normally ciphertext bytes may be written at
+	 * this stage, but this does not occur in GCM mode
+	 */
+	if(1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) return NGX_ERROR;
+	ciphertext_len += len;
+
+	/* Get the tag */
+	if(1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, tag_len, tag))
+		return NGX_ERROR;
+
+	/* Clean up */
+	EVP_CIPHER_CTX_free(ctx);
+
+	return ciphertext_len;
+}
