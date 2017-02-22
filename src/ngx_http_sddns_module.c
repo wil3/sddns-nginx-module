@@ -27,6 +27,8 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include "ngx_http_sddns_module.h"
+#include <curl/curl.h>
+#include <gmp.h>
 
 
 static ngx_str_t ORIGIN_HEADER = ngx_string("origin");
@@ -38,11 +40,26 @@ static ngx_command_t  ngx_http_sddns_commands[] = {
 	  0,
 	  0,
       NULL },
-    { ngx_string("sddns_controller_name"),
+    { ngx_string("sddns_controller_host"),
       NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_str_slot,
       NGX_HTTP_SRV_CONF_OFFSET,
-      offsetof(ngx_http_sddns_srv_conf_t, controller_name),
+      offsetof(ngx_http_sddns_srv_conf_t, controller_host),
+      NULL },
+    { ngx_string("sddns_controller_port"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_num_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, controller_port),
+      NULL },
+
+    { ngx_string("sddns_controller_join_url"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      //NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, controller_join_url),
+      //offsetof(ngx_http_sddns_main_conf_t, controller_join_url),
       NULL },
 
     { ngx_string("sddns_enc_secret"),
@@ -96,15 +113,27 @@ ngx_module_t  ngx_http_sddns_module = {
     ngx_http_sddns_commands,          /* module directives */
     NGX_HTTP_MODULE,                       /* module type */
     NULL,                                  /* init master */
-    NULL,                                  /* init module */
-    NULL,                                  /* init process */
+    NULL,//ngx_http_sddns_module_init,            /* init module */
+	NULL,									/* init process */
     NULL,                                  /* init thread */
     NULL,                                  /* exit thread */
     NULL,                                  /* exit process */
     NULL,                                  /* exit master */
     NGX_MODULE_V1_PADDING
 };
-
+/*  
+ngx_int_t 
+ngx_http_sddns_module_init(ngx_cycle_t *cycle) {
+	ngx_http_sddns_main_conf_t *conf;
+	conf = ngx_http_cycle_get_module_main_conf(cycle, ngx_http_sddns_module);
+	dd("Controller Join %s", conf->controller_join_url.data);
+	if (!ngx_http_sddns_join(conf->controller_join_url)){
+		return NGX_ERROR;
+	}
+	dd("Joined SDDNS");
+	return NGX_OK;
+}
+*/
 
 static void *
 ngx_http_sddns_create_srv_conf(ngx_conf_t *cf)
@@ -131,6 +160,12 @@ ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_http_sddns_srv_conf_t *conf = child;
 
 	ngx_conf_merge_str_value(conf->cookie_name, prev->cookie_name, "");
+  
+	dd("Controller Join %s", conf->controller_join_url.data);
+	if (!ngx_http_sddns_join(conf->controller_join_url)){
+		return NGX_CONF_ERROR;
+	}
+	dd("Joined SDDNS");
 
 	return NGX_CONF_OK;
 }
@@ -152,6 +187,8 @@ ngx_http_sddns_init(ngx_conf_t *cf)
     ngx_http_handler_pt        *h;
     ngx_http_handler_pt        *h1;
     ngx_http_core_main_conf_t  *cmcf;
+
+	
 
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
 
@@ -243,7 +280,7 @@ ngx_http_sddns_access_handler(ngx_http_request_t *r)
 	origin_header = ngx_http_sddns_search_headers_in(r, ORIGIN_HEADER.data, ORIGIN_HEADER.len);
 
 	/* Coming from controller */
-	if ((origin_header != NULL) && ngx_strcasecmp(origin_header->value.data, sc->controller_name.data) == 0){
+	if ((origin_header != NULL) && ngx_strcasecmp(origin_header->value.data, sc->controller_host.data) == 0){
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from controller");
 		return ngx_http_sddns_controller_handler(r, sc);
 
@@ -766,7 +803,7 @@ ngx_http_sddns_create_client_token(ngx_pool_t *pool, ngx_str_t key, u_long ip){
 	ngx_memcpy(p, id, id_len);
 
 	dd("Plaintext");
-    print_hex(plaintext);
+    print_hex(pool, plaintext.data, plaintext.len);
 
 	u_char		ct[plaintext.len];
 	ngx_http_sddns_encrypt(plaintext.data, plaintext.len, key.data, iv, iv_len, ct, tag, tag_len); 
@@ -774,26 +811,96 @@ ngx_http_sddns_create_client_token(ngx_pool_t *pool, ngx_str_t key, u_long ip){
 
 	dd("Ciphertext");
 	print_hex(pool, ct, plaintext.len/2);
+
+	
+	ngx_str_t hexstr = ngx_string("aaaa");
+
+	mpz_t nr1;
+	mpz_init(nr1);
+	mpz_set_str(nr1, (char *)hexstr.data, 16);
+	char *b36 = mpz_get_str(NULL, 36, nr1);
+	dd("B36 = %s", b36);
+
+
+	//reverse
+	
+	mpz_t nr2;
+	mpz_init(nr2);
+	mpz_set_str(nr2, b36, 36);
+	char *b16 = mpz_get_str(NULL, 16, nr2);
+	dd("B16 = %s", b16);
+
+/*  	
+	ngx_str_t src = ngx_string("zzzzzz");
+	ngx_str_t dst;
+	dst.len = 4; 
+	dst.data = ngx_pnalloc(pool, dst.len);
+	dd("Base36 call");
+	base36encode(src.data, src.len, dst.data, dst.len);
+	//base36encode(&dst, &src);
+	dd("base36 encode \"%s\"", dst.data);
+	ngx_str_t o;
+	o.len = 6;
+	o.data =  ngx_pnalloc(pool, o.len);
+	base36decode(dst.data, dst.len, o.data, &o.len);
+	dd("base36 decode \"%s\"", o.data);
+	*/
+
+	
 	return 0;
 }
-
-static char *base36enc(u_char *value)
+/* 
+static void base36encode(ngx_str_t *dst, ngx_str_t *src)
 {
 
-
-	char base36[36] = "0123456789abcdefghijklmnopqrstuvwxyz";
-	/* log(2**64) / log(36) = 12.38 => max 13 char + '\0' */
-
-	char buffer[14];
-	unsigned int offset = sizeof(buffer);
-
-	buffer[--offset] = '\0';
-	do {
-		buffer[--offset] = base36[value % 36];
-	} while (value /= 36);
-
-	return strdup(&buffer[offset]); // warning: this must be free-d by the user
+	static u_char base36[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+	ngx_http_sddns_encode_base64_internal(dst, src, base36, 0);
 }
+
+static void
+ngx_http_sddns_encode_base64_internal(ngx_str_t *dst, ngx_str_t *src, const u_char *basis,
+    ngx_uint_t padding)
+{
+    u_char         *d, *s;
+    size_t          len;
+
+    len = src->len;
+    s = src->data;
+    d = dst->data;
+
+    while (len > 2) {
+		dd("Base64  while %s", d);
+        *d++ = basis[(s[0] >> 2) & 0x3f];
+        *d++ = basis[((s[0] & 3) << 4) | (s[1] >> 4)];
+        *d++ = basis[((s[1] & 0x0f) << 2) | (s[2] >> 6)];
+        *d++ = basis[s[2] & 0x3f];
+
+        s += 3;
+        len -= 3;
+    }
+
+    if (len) {
+        *d++ = basis[(s[0] >> 2) & 0x3f];
+
+        if (len == 1) {
+            *d++ = basis[(s[0] & 3) << 4];
+            if (padding) {
+                *d++ = '=';
+            }
+
+        } else {
+            *d++ = basis[((s[0] & 3) << 4) | (s[1] >> 4)];
+            *d++ = basis[(s[1] & 0x0f) << 2];
+        }
+
+        if (padding) {
+            *d++ = '=';
+        }
+    }
+
+    dst->len = d - dst->data;
+}
+*/
 
 void
 print_hex(ngx_pool_t *pool, u_char *b, int len){
@@ -868,4 +975,182 @@ int ngx_http_sddns_encrypt(unsigned char *plaintext, int plaintext_len,  unsigne
 	EVP_CIPHER_CTX_free(ctx);
 
 	return ciphertext_len;
+}
+
+int base36encode(const void* data_buf, size_t dataLength, u_char* result, size_t resultSize)
+{
+   const char base36chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+   const uint8_t *data = (const uint8_t *)data_buf;
+   size_t resultIndex = 0;
+   size_t x;
+   uint32_t n = 0;
+   int padCount = dataLength % 3;
+   uint8_t n0, n1, n2, n3;
+
+   /* increment over the length of the string, three characters at a time */
+   for (x = 0; x < dataLength; x += 3) 
+   {
+      /* these three 8-bit (ASCII) characters become one 24-bit number */
+      n = ((uint32_t)data[x]) << 16; //parenthesis needed, compiler depending on flags can do the shifting before conversion to uint32_t, resulting to 0
+      
+      if((x+1) < dataLength)
+         n += ((uint32_t)data[x+1]) << 8;//parenthesis needed, compiler depending on flags can do the shifting before conversion to uint32_t, resulting to 0
+      
+      if((x+2) < dataLength)
+         n += data[x+2];
+
+      /* this 24-bit number gets separated into four 6-bit numbers */
+      n0 = ((uint8_t)(n >> 18) & 63) % 36;
+      n1 = ((uint8_t)(n >> 12) & 63) % 36;
+      n2 = ((uint8_t)(n >> 6) & 63) % 36;
+      n3 = ((uint8_t)n & 63) % 36;
+
+
+            
+      /*
+       * if we have one byte available, then its encoding is spread
+       * out over two characters
+       */
+      if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+      result[resultIndex++] = base36chars[n0];
+      if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+      result[resultIndex++] = base36chars[n1];
+
+      /*
+       * if we have only two bytes available, then their encoding is
+       * spread out over three chars
+       */
+      if((x+1) < dataLength)
+      {
+         if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+         result[resultIndex++] = base36chars[n2];
+      }
+
+      /*
+       * if we have all three bytes available, then their encoding is spread
+       * out over four characters
+       */
+      if((x+2) < dataLength)
+      {
+         if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+         result[resultIndex++] = base36chars[n3];
+      }
+   }  
+
+   /*
+    * create and add padding that is required if we did not have a multiple of 3
+    * number of characters available
+    */
+   if (padCount > 0) 
+   { 
+      for (; padCount < 3; padCount++) 
+      { 
+         if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+         result[resultIndex++] = '=';
+      } 
+   }
+   if(resultIndex >= resultSize) return 1;   /* indicate failure: buffer too small */
+   result[resultIndex] = 0;
+   return 0;   /* indicate success */
+}
+#define EQUALS     65
+#define INVALID    66
+
+static const unsigned char d[] = {
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66, //0 - 24
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66, 0, 1, //25 - 49 
+     2, 3, 4, 5, 6, 7, 8, 9,66,66,66,65,66,66,66, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,10,11,12,
+    13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,66,66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,
+    66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,66,
+    66,66,66,66,66,66
+};
+
+int base36decode (u_char *in, size_t inLen, unsigned char *out, size_t *outLen) { 
+    u_char *end = in + inLen;
+    u_char iter = 0;
+    uint32_t buf = 0;
+    size_t len = 0;
+    
+    while (in < end) {
+        unsigned char c = d[*in++];
+        
+        switch (c) {
+        case INVALID:    return 1;   /* invalid input, return error */
+        case EQUALS:                 /* pad character, end of data */
+            in = end;
+            continue;
+        default:
+            buf = buf << 6 | c;
+            iter++; // increment the number of iteration
+            /* If the buffer is full, split it into bytes */
+            if (iter == 4) {
+                if ((len += 3) > *outLen) return 1; /* buffer overflow */
+                *(out++) = (buf >> 16) & 255;
+                *(out++) = (buf >> 8) & 255;
+                *(out++) = buf & 255;
+                buf = 0; iter = 0;
+
+            }   
+        }
+    }
+   
+    if (iter == 3) {
+        if ((len += 2) > *outLen) return 1; /* buffer overflow */
+        *(out++) = (buf >> 10) & 255;
+        *(out++) = (buf >> 2) & 255;
+    }
+    else if (iter == 2) {
+        if (++len > *outLen) return 1; /* buffer overflow */
+        *(out++) = (buf >> 4) & 255;
+    }
+
+    *outLen = len; /* modify to reflect the actual output size */
+    return 0;
+}
+
+
+int
+ngx_http_sddns_join(ngx_str_t join_url){
+	CURL *curl;
+  	CURLcode res;
+	int r = 0;
+ 
+	/* In windows, this will init the winsock stuff */ 
+	curl_global_init(CURL_GLOBAL_ALL);
+
+	/* get a curl handle */ 
+	curl = curl_easy_init();
+	if(curl) {
+		//struct curl_slist *chunk = NULL;
+		//chunk = curl_slist_append(chunk, "Authorization: example.com");
+	    //curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+
+		/* First set the URL that is about to receive our POST. This URL can
+		   just as well be a https:// URL if that is what should receive the
+		   data. */ 
+		curl_easy_setopt(curl, CURLOPT_URL, join_url.data);
+		/* Now specify the POST data */ 
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "ip=1.2.3.4");
+
+		/* Perform the request, res will get the return code */ 
+		res = curl_easy_perform(curl);
+		/* Check for errors */ 
+		if(res == CURLE_OK){
+			r = 1;
+		} else {
+			dd( "Join failed");
+		}
+
+		/* always cleanup */ 
+		curl_easy_cleanup(curl);
+		/*  free the custom headers */ 
+	   //curl_slist_free_all(chunk);	
+	}
+	curl_global_cleanup();
+	return r;
 }
