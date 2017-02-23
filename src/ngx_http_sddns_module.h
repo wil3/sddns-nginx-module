@@ -1,10 +1,16 @@
 
+#define  NGX_HTTP_SDDNS_TAG_LEN 16
+#define  NGX_HTTP_SDDNS_ID_LEN 8
+#define  NGX_HTTP_SDDNS_IV_LEN 12
+
 typedef struct {
     ngx_str_t                  		enc_secret;
     ngx_str_t                  		sign_secret;
 	ngx_str_t				   		cookie_name;
+	ngx_str_t				   		cookie_domain;
+	time_t								cookie_expire;
 	ngx_str_t				   		controller_host;
-	int							controller_port;
+	int								controller_port;
     ngx_flag_t     					ctrl_request;
 	ngx_list_t						*allowed;
 	ngx_pool_t                      *pool;
@@ -71,8 +77,9 @@ ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t
 
 
 
+
 static ngx_int_t
-ngx_http_sddns_create_client_token(ngx_pool_t *pool, ngx_str_t key, u_long ip);
+ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id, u_long ip, ngx_str_t * client_token);
 
 //static ngx_int_t 
 //ngx_http_sddns_get_rand_bytes(ngx_pool_t *pool, u_char *buf, int len);
@@ -91,10 +98,20 @@ print_hex(ngx_pool_t *pool, u_char *b, int len);
 //ngx_http_sddns_encode_base64_internal(ngx_str_t *dst, ngx_str_t *src, const u_char *basis,
  //   ngx_uint_t padding);
 
-int base36encode(const void* data_buf, size_t dataLength, u_char* result, size_t resultSize);
-int base36decode (u_char *in, size_t inLen, unsigned char *out, size_t *outLen); 
+u_char* ngx_http_sddns_b36_encode(u_char *src, size_t len);
+
+char* ngx_http_sddns_b36_decode(char *src, size_t len);
+void ngx_http_sddns_hex_to_string(u_char *dst, u_char *src);
+//int base36encode(const void* data_buf, size_t dataLength, u_char* result, size_t resultSize);
+//int base36decode (u_char *in, size_t inLen, unsigned char *out, size_t *outLen); 
 
 int
 ngx_http_sddns_join(ngx_str_t join_url);
 
 ngx_int_t ngx_http_sddns_module_init(ngx_cycle_t *cycle); 
+
+static ngx_int_t
+ngx_http_sddns_set_cookie(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *conf, ngx_str_t cookie_value, int http_only);
+
+static ngx_int_t
+ngx_http_sddns_generate_client_id(u_char * id, int len);
