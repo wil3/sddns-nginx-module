@@ -3,6 +3,10 @@
 #define  NGX_HTTP_SDDNS_ID_LEN 8
 #define  NGX_HTTP_SDDNS_IV_LEN 12
 
+#define  NGX_HTTP_SDDNS_REQ_CODE_NORMAL 0 
+#define  NGX_HTTP_SDDNS_REQ_CODE_CTRL 	1 
+#define  NGX_HTTP_SDDNS_REQ_CODE_INIT 	2 
+
 typedef struct {
     ngx_str_t                  		enc_secret;
     ngx_str_t                  		sign_secret;
@@ -11,7 +15,7 @@ typedef struct {
 	time_t								cookie_expire;
 	ngx_str_t				   		controller_host;
 	int								controller_port;
-    ngx_flag_t     					ctrl_request;
+	int								request_type; 					
 	ngx_list_t						*allowed;
 	ngx_pool_t                      *pool;
 	ngx_str_t				   		controller_join_url;
@@ -115,3 +119,11 @@ ngx_http_sddns_set_cookie(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *conf
 
 static ngx_int_t
 ngx_http_sddns_generate_client_id(u_char * id, int len);
+
+static ngx_int_t
+ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+
+static ngx_int_t
+ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+static ngx_int_t
+ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
