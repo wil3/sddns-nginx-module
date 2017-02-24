@@ -1,7 +1,10 @@
 
-#define  NGX_HTTP_SDDNS_TAG_LEN 16
-#define  NGX_HTTP_SDDNS_ID_LEN 8
-#define  NGX_HTTP_SDDNS_IV_LEN 12
+#define  NGX_HTTP_SDDNS_TAG_LEN 		16
+#define  NGX_HTTP_SDDNS_ID_LEN 			8
+#define  NGX_HTTP_SDDNS_IV_LEN 			12
+#define  NGX_HTTP_SDDNS_IPV4_LEN 		4
+
+#define  NGX_HTTP_SDDNS_IPV4_TOKEN_LEN		40 
 
 #define  NGX_HTTP_SDDNS_REQ_CODE_NORMAL 0 
 #define  NGX_HTTP_SDDNS_REQ_CODE_CTRL 	1 
@@ -19,7 +22,15 @@ typedef struct {
 	ngx_list_t						*allowed;
 	ngx_pool_t                      *pool;
 	ngx_str_t				   		controller_join_url;
+
+
 } ngx_http_sddns_srv_conf_t;
+
+typedef struct {
+
+	ngx_str_t				   		client_token;
+
+} ngx_http_sddns_req_ctx_t;
 /*  
 typedef struct {
 } ngx_http_sddns_main_conf_t;
