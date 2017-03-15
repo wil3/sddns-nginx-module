@@ -22,7 +22,10 @@ typedef struct {
 	ngx_list_t						*allowed;
 	ngx_pool_t                      *pool;
 	ngx_str_t				   		controller_join_url;
-
+	//A unique domain allowing the controller to send requests specifically to this server
+	ngx_str_t						unique_domain;
+	// The nodes public key (pk), can be a hash of its unique identity (unique_domain)
+	ngx_str_t						pk;
 
 } ngx_http_sddns_srv_conf_t;
 
@@ -121,7 +124,7 @@ void ngx_http_sddns_hex_to_string(u_char *dst, u_char *src);
 //int base36decode (u_char *in, size_t inLen, unsigned char *out, size_t *outLen); 
 
 int
-ngx_http_sddns_join(ngx_str_t join_url);
+ngx_http_sddns_join(ngx_pool_t *pool, ngx_str_t join_url, ngx_str_t pk, ngx_str_t host);
 
 ngx_int_t ngx_http_sddns_module_init(ngx_cycle_t *cycle); 
 
@@ -138,3 +141,6 @@ static ngx_int_t
 ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
 static ngx_int_t
 ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+
+static ngx_http_sddns_client_node_t * 
+ngx_http_sddns_whitelist_remove(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt);

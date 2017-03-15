@@ -63,6 +63,22 @@ static ngx_command_t  ngx_http_sddns_commands[] = {
       offsetof(ngx_http_sddns_srv_conf_t, controller_join_url),
       //offsetof(ngx_http_sddns_main_conf_t, controller_join_url),
       NULL },
+    { ngx_string("sddns_unique_domain"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      //NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, unique_domain),
+      //offsetof(ngx_http_sddns_main_conf_t, controller_join_url),
+      NULL },
+    { ngx_string("sddns_pk"),
+      NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+      //NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, pk),
+      //offsetof(ngx_http_sddns_main_conf_t, controller_join_url),
+      NULL },
 
     { ngx_string("sddns_enc_secret"),
       NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
@@ -178,7 +194,7 @@ ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_value(conf->cookie_expire, prev->cookie_expire, 0);
   
 	dd("Controller Join %s", conf->controller_join_url.data);
-	if (!ngx_http_sddns_join(conf->controller_join_url)){
+	if (!ngx_http_sddns_join(cf->pool, conf->controller_join_url, conf->pk, conf->unique_domain)){
 		return NGX_CONF_ERROR;
 	}
 	dd("Joined SDDNS");
@@ -332,16 +348,20 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS host \"%V\"", &host->value);
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS token \"%V\"", &ctx->client_token);
 
-
+//FIXME hardcoded scheme
 	len =  sizeof("http://") - 1;
-    len += ctx->client_token.len + 1 + host->value.len + r->uri.len;// + 1; //NULL char
+    len += ctx->client_token.len + 1 + host->value.len + r->uri.len + 1; //NULL char
 	location = ngx_pcalloc(r->pool, len);
 	p = ngx_copy(location, "http://", sizeof("http://") - 1);
 	p = ngx_copy(p, ctx->client_token.data, ctx->client_token.len);
 	p = ngx_copy(p, ".", sizeof(".") - 1);
-	p = ngx_copy(p, host->value.data, host->value.len);
-	(void)ngx_copy(p, r->uri.data, r->uri.len);
-	//*p = '/';
+	if (r->uri.len > 0){
+		p = ngx_copy(p, host->value.data, host->value.len);
+		(void)ngx_copy(p, r->uri.data, r->uri.len);
+	} else {
+		(void)ngx_copy(p, host->value.data, host->value.len);
+	}
+	*p = '\0';
 
     ngx_table_elt_t  *set_location;
     set_location = ngx_list_push(&r->headers_out.headers);
@@ -417,12 +437,12 @@ ngx_http_sddns_access_handler(ngx_http_request_t *r)
 
 	/* Coming from controller */
 	if ((origin_header != NULL) && ngx_strcasecmp(origin_header->value.data, sc->controller_host.data) == 0){
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from controller");
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS request from controller");
 		return ngx_http_sddns_controller_handler(r, sc);
 
 	/* From a client */
 	} else {
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Request from client");
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS request from client");
 		return ngx_http_sddns_client_handler(r, sc);
 	}
 
@@ -437,6 +457,7 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 
 	ngx_str_t						clientid_value;
 	ngx_str_t						clientip_value;
+	ngx_str_t						action;
 	ngx_http_sddns_client_node_t 	*ic;
 	ngx_http_sddns_client_node_t 	*cn;
 
@@ -459,7 +480,6 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 						  "SDDNS clientid=\"%s\" len=\"%d\"",
 						  clientid_value.data, clientid_value.len);
 
-
 			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 						  "SDDNS id=\"%V\"",
 						  &clientid_value);
@@ -469,32 +489,52 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 						  "SDDNS ip=\"%V\"",
 						  &clientip_value);
 		}
+        if (ngx_http_arg(r, (u_char *) "action", 6, &action) == NGX_OK) {
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						  "SDDNS ctrl action=\"%V\"",
+						  &action);
+		}
 	}
 
 	cn = ngx_http_sddns_get_client_by_id(sc, r, sc->allowed, clientid_value);
 
-	if (cn == NULL){
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS doesnt exit, insert");
+	if (ngx_strncmp(action.data,"allow", 5) == 0){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS ALLOW the client");
 
-		ic = ngx_http_sddns_insert_client(sc, r, sc->allowed, clientid_value, clientip_value);
-		if (ic == NULL){
-			return NGX_ERROR;
-		}
+		if (cn == NULL){
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS doesnt exist, insert");
 
-	} else {
-	
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
-				"SDDNS this ID is already set to ip=\"%V\"",
-				&cn->address);
-
-		if (ngx_strncmp(clientip_value.data, cn->address.data, cn->address.len) != 0){
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Updating IP address");
-			ngx_http_sddns_update_client(r, cn, clientip_value);
+			ic = ngx_http_sddns_insert_client(sc, r, sc->allowed, clientid_value, clientip_value);
+			if (ic == NULL){
+				return NGX_ERROR;
+			}
 
 		} else {
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Record already exists");
+
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+					"SDDNS this ID is already set to ip=\"%V\"",
+					&cn->address);
+
+			if (ngx_strncmp(clientip_value.data, cn->address.data, cn->address.len) != 0){
+				ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Updating IP address");
+				ngx_http_sddns_update_client(r, cn, clientip_value);
+			} else {
+				ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Record already exists");
+			}
 		}
+
+
+	} else if (ngx_strncmp(action.data, "block", 5) == 0){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS BLOCK the client");
+		ngx_http_sddns_whitelist_remove(r, cn);
+	} else {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "Unknown action");
+
 	}
+
+
+
+
 	ngx_str_null(&clientid_value);
 	ngx_str_null(&clientip_value);
 	
@@ -513,19 +553,19 @@ ngx_http_sddns_insert_client(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *
 		return NULL;
 	}
 
-	p_id = ngx_pnalloc(sc->pool, id.len + 1);
-	p_ip = ngx_pnalloc(sc->pool, ip.len + 1);
+	p_id = ngx_pnalloc(sc->pool, id.len);
+	p_ip = ngx_pnalloc(sc->pool, ip.len);
 
 	if (p_id == NULL || p_ip == NULL) {
 		return NULL;
 	}
 	elt->client_id.len = id.len;
 	elt->client_id.data = p_id;
-	ngx_memcpy(p_id, id.data, id.len+1);
+	ngx_memcpy(p_id, id.data, id.len);
 
 	elt->address.len = ip.len;
 	elt->address.data = p_ip;
-	ngx_memcpy(p_ip, ip.data, ip.len+1);
+	ngx_memcpy(p_ip, ip.data, ip.len);
 
 	ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
 			"SDDNS insert id=\"%s\" ip=\"%s\" len=\"%d\"",
@@ -554,7 +594,13 @@ ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t
 	return elt;
 }
 
-
+static ngx_http_sddns_client_node_t * 
+ngx_http_sddns_whitelist_remove(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt){
+	//TODO fix this, this is sloppy need to propery remove
+	ngx_str_null(&elt->address);
+	ngx_str_null(&elt->client_id);
+	return elt;
+}
 
 static ngx_http_sddns_client_node_t*
 ngx_http_sddns_get_client_by_id(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *r, ngx_list_t *list, ngx_str_t id){
@@ -582,9 +628,9 @@ ngx_http_sddns_get_client_by_id(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_
 			"SDDNS #%d, Search ID=\"%V\" IP=\"%V\"",
 			i, &elts[i].client_id, &elts[i].address);
 
-		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
-			"SDDNS #%d Search ID=\"%s\" IP=\"%s\"",
-		i, 	elts[i].client_id.data, elts[i].address.data);
+//		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+//			"SDDNS #%d Search ID=\"%s\" IP=\"%s\"",
+//		i, 	elts[i].client_id.data, elts[i].address.data);
 
 		if (ngx_strncmp(id.data, elts[i].client_id.data, id.len) == 0){
 			return &elts[i];
@@ -602,7 +648,7 @@ ngx_http_sddns_is_authorized(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *s
 	u_char 				*bin;
 	ngx_str_t 			base64, hmac;
 
-
+//TODO Need to change this to a cookie
 	auth_header = r->headers_in.authorization;
 
 	if (auth_header == NULL){
@@ -620,7 +666,7 @@ ngx_http_sddns_is_authorized(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *s
 
 	data = ngx_http_sddns_create_request_string(r);
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				  "SDDNS signature string=%V",
+				  "SDDNS signature string=\"%V\"",
 				  &data);
 
 	base64.len = ngx_base64_encoded_length(32);
@@ -719,10 +765,35 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 				  "SDDNS client cookie2 \"%V\"",
 				  &cookie_id);
 
-	cn = ngx_http_sddns_get_client_by_id(sc, r, sc->allowed, cookie_id);
+	ngx_str_t escaped_id;
+	u_char *dst;
+	uintptr_t i, p;
+	i = ngx_escape_uri(NULL, cookie_id.data, cookie_id.len,NGX_ESCAPE_URI_COMPONENT);
+//	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+//			"SDDNS escape length %d", i);
+
+	dst =  ngx_pnalloc(r->pool, cookie_id.len + (2*i));
+	if (dst == NULL){
+		return NGX_ERROR;
+	}
+	p = ngx_escape_uri(dst, cookie_id.data, cookie_id.len, NGX_ESCAPE_URI_COMPONENT);
+	escaped_id.len = (u_char *)p - dst ;
+	escaped_id.data =ngx_pnalloc(r->pool, escaped_id.len  );
+	if (escaped_id.data == NULL){
+		return NGX_ERROR;
+	}
+
+    (void)ngx_copy(escaped_id.data, dst, escaped_id.len);
+	/*  
+*/
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				  "SDDNS escaped ID= \"%V\"",
+				  &escaped_id);
+
+	cn = ngx_http_sddns_get_client_by_id(sc, r, sc->allowed, escaped_id);// cookie_id);
 
 	if (!cn){
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS not id found");
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS ID not found");
 		return ngx_http_sddns_init_client(r, sc);
 	} 
 
@@ -1399,10 +1470,12 @@ int base36decode (u_char *in, size_t inLen, unsigned char *out, size_t *outLen) 
 
 
 int
-ngx_http_sddns_join(ngx_str_t join_url){
+ngx_http_sddns_join(ngx_pool_t *pool, ngx_str_t join_url, ngx_str_t pk, ngx_str_t host){
 	CURL *curl;
   	CURLcode res;
 	int r = 0;
+	ngx_str_t buff;
+    u_char *p;
  
 	/* In windows, this will init the winsock stuff */ 
 	curl_global_init(CURL_GLOBAL_ALL);
@@ -1419,7 +1492,19 @@ ngx_http_sddns_join(ngx_str_t join_url){
 		   data. */ 
 		curl_easy_setopt(curl, CURLOPT_URL, join_url.data);
 		/* Now specify the POST data */ 
-		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "ip=1.2.3.4");
+		buff.len =  sizeof("pk=")-1 + pk.len + sizeof("&host=")-1 +  host.len;
+		buff.data = ngx_palloc(pool, buff.len + 1);
+		if (buff.data == NULL){
+			//return NULL;
+		}
+
+		p = ngx_copy(buff.data, "pk=", sizeof("pk=")-1);
+		p = ngx_copy(p, pk.data, pk.len);
+		p = ngx_copy(p, "&host=", sizeof("&host=")-1);
+		p = ngx_copy(p, host.data, host.len);
+
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, buff.data);
+		dd("Join data %s", buff.data);
 
 		/* Perform the request, res will get the return code */ 
 		res = curl_easy_perform(curl);
