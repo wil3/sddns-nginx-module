@@ -41,6 +41,7 @@ typedef struct {
 typedef struct {
     ngx_str_t                 client_id;
     ngx_str_t                 address;
+	int						  allow;
 } ngx_http_sddns_client_node_t;
 
 static void *
@@ -135,7 +136,7 @@ static ngx_int_t
 ngx_http_sddns_generate_client_id(u_char * id, int len);
 
 static ngx_int_t
-ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc, ngx_str_t *id);
 
 static ngx_int_t
 ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
