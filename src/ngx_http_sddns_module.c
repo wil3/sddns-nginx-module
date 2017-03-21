@@ -37,10 +37,10 @@ static ngx_str_t ORIGIN_HEADER = ngx_string("origin");
 
 static ngx_command_t  ngx_http_sddns_commands[] = {
     { ngx_string("sddns"),
-      NGX_HTTP_SRV_CONF|NGX_CONF_NOARGS,
-      ngx_http_sddns,
-	  0,
-	  0,
+      NGX_HTTP_SRV_CONF|NGX_CONF_FLAG,
+	  ngx_conf_set_flag_slot,
+      NGX_HTTP_SRV_CONF_OFFSET,
+      offsetof(ngx_http_sddns_srv_conf_t, enable),
       NULL },
     { ngx_string("sddns_controller_host"),
       NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
@@ -177,6 +177,7 @@ ngx_http_sddns_create_srv_conf(ngx_conf_t *cf)
 
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cf->log, 0, "SDDNS srv conf");
 
+	conf->enable = NGX_CONF_UNSET;
 	conf->cookie_expire = NGX_CONF_UNSET;
 	conf->allowed = ngx_list_create(cf->pool, 10, sizeof(ngx_http_sddns_client_node_t));
 	conf->pool = cf->pool;
@@ -193,20 +194,25 @@ ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value(conf->cookie_name, prev->cookie_name, "");
 	ngx_conf_merge_value(conf->cookie_expire, prev->cookie_expire, 0);
   
-	dd("Controller Join %s", conf->controller_join_url.data);
-	if (!ngx_http_sddns_join(cf->pool, conf->controller_join_url, conf->pk, conf->unique_domain)){
-		return NGX_CONF_ERROR;
+
+	if (conf->enable == NGX_CONF_UNSET) {
+		if (prev->enable == NGX_CONF_UNSET) {
+			conf->enable = 0;
+		} else {
+			conf->enable = prev->enable;
+		}
 	}
-	dd("Joined SDDNS");
+	if (conf->enable){
+		dd("Controller Join %s", conf->controller_join_url.data);
+		if (!ngx_http_sddns_join(cf->pool, conf->controller_join_url, conf->pk, conf->unique_domain)){
+			return NGX_CONF_ERROR;
+		}
+		dd("Joined SDDNS");
+	}
 
 	return NGX_CONF_OK;
 }
 
-static char *
-ngx_http_sddns(ngx_conf_t *cf, ngx_command_t *comd, void *conf)
-{
-	return NGX_CONF_OK;
-}
 
 
 
@@ -217,7 +223,7 @@ ngx_http_sddns_init(ngx_conf_t *cf)
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, cf->log, 0, "INIT SDDNS");
 
     ngx_http_handler_pt        *h;
-    ngx_http_handler_pt        *h1;
+   // ngx_http_handler_pt        *h1;
     ngx_http_core_main_conf_t  *cmcf;
 
 	
@@ -231,17 +237,20 @@ ngx_http_sddns_init(ngx_conf_t *cf)
 
     *h = ngx_http_sddns_access_handler;
 
+
+	/*  
     h1 = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
     if (h1 == NULL) {
         return NGX_ERROR;
     }
 
     *h1 = ngx_http_sddns_content_handler;
-
+*/
     return NGX_OK;
 }
 
-
+/*
+ * Specify how the response is re-written
 static ngx_int_t
 ngx_http_sddns_content_handler(ngx_http_request_t *r)
 {
@@ -253,20 +262,25 @@ ngx_http_sddns_content_handler(ngx_http_request_t *r)
 
 	switch(sc->request_type){
 		case NGX_HTTP_SDDNS_REQ_CODE_CTRL:
-			  return ngx_http_sddns_content_handler_ctrl(r, sc);
+			 // return ngx_http_sddns_content_handler_ctrl(r, sc);
+			 return NGX_DECLINED;
 		case NGX_HTTP_SDDNS_REQ_CODE_INIT:
-			  return ngx_http_sddns_content_handler_init(r, sc);
+			 // return ngx_http_sddns_content_handler_init(r, sc);
+			 return NGX_DECLINED;
 		default:
 			return NGX_DECLINED;
 	}
 
 }
+ */
 static ngx_int_t
 ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
 {
     ngx_buf_t                      *b;
     ngx_int_t                       rc;
     ngx_chain_t                     out;
+
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Response: to controller");
 
     r->headers_out.status = NGX_HTTP_OK;
 	r->headers_in.content_length_n = 0;
@@ -307,15 +321,15 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 {
     ngx_buf_t                      *b;
     ngx_chain_t                     out;
-    ngx_int_t                       rc;
-	ngx_table_elt_t		*host;
-    u_char                     *location;
-    u_char                     *p;
-    size_t                     len;
+    ngx_int_t                   rc;
+	ngx_table_elt_t				*host;
+    u_char                     	*location;
+    u_char                     	*p;
+    size_t                     	len;
+	ngx_http_sddns_req_ctx_t 	*ctx;
 
-	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS content handler init");
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Response: redirect client");
 
-	ngx_http_sddns_req_ctx_t *ctx;
 	ctx = ngx_http_get_module_ctx(r, ngx_http_sddns_module);
 
 	r->headers_in.content_length_n = 0;
@@ -350,7 +364,7 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 
 //FIXME hardcoded scheme
 	len =  sizeof("http://") - 1;
-    len += ctx->client_token.len + 1 + sc->cookie_domain.len + r->uri.len + 1; //NULL char
+    len += ctx->client_token.len + 1 + sc->cookie_domain.len + r->uri.len;// + 1; //NULL char
 	location = ngx_pcalloc(r->pool, len);
 	p = ngx_copy(location, "http://", sizeof("http://") - 1);
 	p = ngx_copy(p, ctx->client_token.data, ctx->client_token.len);
@@ -361,7 +375,7 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 	} else {
 		(void)ngx_copy(p,sc->cookie_domain.data, sc->cookie_domain.len);
 	}
-	*p = '\0';
+//	*p = '\0';
 
     ngx_table_elt_t  *set_location;
     set_location = ngx_list_push(&r->headers_out.headers);
@@ -424,6 +438,10 @@ ngx_http_sddns_access_handler(ngx_http_request_t *r)
 	sc = ngx_http_get_module_srv_conf(r, ngx_http_sddns_module);
 	if (sc == NULL){
 		return NGX_ERROR;
+	}
+
+	if (!sc->enable){
+		return NGX_DECLINED;
 	}
 	sc->request_type = NGX_HTTP_SDDNS_REQ_CODE_NORMAL;
 	/*  
@@ -539,7 +557,8 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 	ngx_str_null(&clientip_value);
 	
 	sc->request_type = NGX_HTTP_SDDNS_REQ_CODE_CTRL; 
-	return NGX_OK;
+//return NGX_OK;
+	return ngx_http_sddns_content_handler_ctrl(r, sc);
 }
 
 static ngx_http_sddns_client_node_t * 
@@ -759,9 +778,7 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
                                           &sc->cookie_name, &cookie_id );
 	//If the cookie cannot be found
     if (n == NGX_DECLINED) {
-
 		return ngx_http_sddns_init_client(r, sc, NULL);
-
     } 
 
 	//TODO check if cookie expire
@@ -829,7 +846,9 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 	return NGX_OK;
 
 }
-
+/*
+ * Boot strap the client
+ */
 static ngx_int_t
 ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc, ngx_str_t *id){
 
@@ -894,11 +913,9 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	dd("B64 Client ID=\"%s\"", client_id_b64.data);
 
 	dd("Setting cookie");
-
 	//set cookie
 	ngx_http_sddns_set_cookie(r, sc, client_id_b64, 0);
 
-	//redirect
 
 	ngx_http_sddns_req_ctx_t  *ctx;
 	ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_sddns_req_ctx_t));
@@ -918,7 +935,8 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 
 	sc->request_type = NGX_HTTP_SDDNS_REQ_CODE_INIT;
 
-	return NGX_OK;
+	//return NGX_OK;
+	return ngx_http_sddns_content_handler_init(r, sc);
 }
 static ngx_int_t
 ngx_http_sddns_set_cookie(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *conf, ngx_str_t cookie_value, int http_only){

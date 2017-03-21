@@ -11,6 +11,7 @@
 #define  NGX_HTTP_SDDNS_REQ_CODE_INIT 	2 
 
 typedef struct {
+	ngx_flag_t						enable;
     ngx_str_t                  		enc_secret;
     ngx_str_t                  		sign_secret;
 	ngx_str_t				   		cookie_name;
@@ -50,8 +51,6 @@ ngx_http_sddns_create_srv_conf(ngx_conf_t *cf);
 static char *
 ngx_http_sddns_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
 
-static char *
-ngx_http_sddns(ngx_conf_t *cf, ngx_command_t *comd, void *conf);
 
 static ngx_int_t
 ngx_http_sddns_init(ngx_conf_t *cf); 
@@ -84,8 +83,8 @@ ngx_http_sddns_insert_client(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *
 static ngx_http_sddns_client_node_t*
 ngx_http_sddns_get_client_by_id(ngx_http_sddns_srv_conf_t *sc, ngx_http_request_t *r, ngx_list_t *list, ngx_str_t id);
 
-static ngx_int_t
-ngx_http_sddns_content_handler(ngx_http_request_t *r);
+//static ngx_int_t
+//ngx_http_sddns_content_handler(ngx_http_request_t *r);
 
 static ngx_http_sddns_client_node_t * 
 ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt, ngx_str_t ip);
