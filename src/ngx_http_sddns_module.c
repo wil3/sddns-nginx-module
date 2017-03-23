@@ -237,15 +237,14 @@ ngx_http_sddns_init(ngx_conf_t *cf)
 
     *h = ngx_http_sddns_access_handler;
 
-
-	/*  
+/*  
     h1 = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
     if (h1 == NULL) {
         return NGX_ERROR;
     }
 
     *h1 = ngx_http_sddns_content_handler;
-*/
+	*/
     return NGX_OK;
 }
 
@@ -273,25 +272,59 @@ ngx_http_sddns_content_handler(ngx_http_request_t *r)
 
 }
  */
+
+
 static ngx_int_t
+ngx_http_sddns_ctrl_response(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
+{
+    ngx_int_t                   rc;
+
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Ctrl Response");
+
+    r->headers_out.status = NGX_HTTP_OK;
+	r->keepalive = 0;
+	r->header_only = 1;
+	r->discard_body = 0;
+
+	ngx_http_clear_content_length(r);
+	ngx_str_null(&r->headers_out.content_type);
+	r->headers_out.last_modified_time = -1;
+	r->headers_out.last_modified = NULL;
+	r->headers_out.content_length = 0;
+	r->headers_out.content_length_n = 0;
+    r->headers_out.content_type_len = 0;
+
+
+	dd("Before send headers");
+    rc = ngx_http_send_header(r);
+	dd("After send headers");
+	ngx_http_finalize_request(r, rc);
+	return NGX_HTTP_OK;
+}
+
+/*  
+ngx_int_t
 ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
 {
-    ngx_buf_t                      *b;
+  //  ngx_buf_t                      *b;
     ngx_int_t                       rc;
-    ngx_chain_t                     out;
+  //  ngx_chain_t                     out;
 
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Response: to controller");
 
     r->headers_out.status = NGX_HTTP_OK;
 	r->headers_in.content_length_n = 0;
-	ngx_str_set(&r->headers_out.content_type, "text/html");
-	ngx_str_set(&r->headers_out.charset, "utf-8");
+//	ngx_str_set(&r->headers_out.content_type, "text/html");
+//	ngx_str_set(&r->headers_out.charset, "utf-8");
 
-    r->headers_out.content_type_len = r->headers_out.content_type.len;
+    r->headers_out.content_type_len = 0;//r->headers_out.content_type.len;
     r->headers_out.content_type_lowcase = NULL;
 
     rc = ngx_http_send_header(r);
- 
+	ngx_http_finalize_request(r, rc);
+	return NGX_HTTP_OK;
+*/ 
+	/*  
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS send header error");
         return rc;
@@ -313,32 +346,30 @@ ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_co
     out.next = NULL;
 
     return ngx_http_output_filter(r, &out);
-
-}
+*/
+//}
 
 static ngx_int_t
-ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc)
+ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc, ngx_str_t token)
 {
-    ngx_buf_t                      *b;
-    ngx_chain_t                     out;
-    ngx_int_t                   rc;
+    //ngx_buf_t                      *b;
+    //ngx_chain_t                     out;
+	
+   // ngx_int_t                   rc;
 	ngx_table_elt_t				*host;
     u_char                     	*location;
     u_char                     	*p;
     size_t                     	len;
-	ngx_http_sddns_req_ctx_t 	*ctx;
 
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS Response: redirect client");
 
-	ctx = ngx_http_get_module_ctx(r, ngx_http_sddns_module);
 
-	r->headers_in.content_length_n = 0;
+	//r->headers_in.content_length_n = 0;
     r->headers_out.status = NGX_HTTP_TEMPORARY_REDIRECT;
 	r->keepalive = 0;
-
+	/*  
 	r->header_only = 1;
 	r->discard_body = 0;
-
 	ngx_http_clear_content_length(r);
 	ngx_str_null(&r->headers_out.content_type);
 	r->headers_out.last_modified_time = -1;
@@ -346,13 +377,9 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 	r->headers_out.content_length = 0;
 	r->headers_out.content_length_n = 0;
     r->headers_out.content_type_len = 0;
-
+	*/
 	//ngx_http_clear_location(r);
-
-	r->headers_out.location = ngx_palloc(r->pool, sizeof(ngx_table_elt_t));
-	if (r->headers_out.location == NULL) {
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
-	}
+	//
 
 
 	host = r->headers_in.host;
@@ -360,14 +387,15 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 		return NGX_ERROR;
 	}
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS host \"%V\"", &host->value);
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS token \"%V\"", &ctx->client_token);
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS token \"%V\"", &token);
 
-//FIXME hardcoded scheme
+	//FIXME hardcoded scheme
 	len =  sizeof("http://") - 1;
-    len += ctx->client_token.len + 1 + sc->cookie_domain.len + r->uri.len;// + 1; //NULL char
+    len += token.len + 1 + sc->cookie_domain.len + r->uri.len;// + 1; //NULL char
 	location = ngx_pcalloc(r->pool, len);
+	dd("Location len: \"%zu\"", len);
 	p = ngx_copy(location, "http://", sizeof("http://") - 1);
-	p = ngx_copy(p, ctx->client_token.data, ctx->client_token.len);
+	p = ngx_copy(p, token.data, token.len);
 	p = ngx_copy(p, ".", sizeof(".") - 1);
 	if (r->uri.len > 0){
 		p = ngx_copy(p, sc->cookie_domain.data, sc->cookie_domain.len);
@@ -375,18 +403,30 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
 	} else {
 		(void)ngx_copy(p,sc->cookie_domain.data, sc->cookie_domain.len);
 	}
-//	*p = '\0';
 
+	/*  
     ngx_table_elt_t  *set_location;
     set_location = ngx_list_push(&r->headers_out.headers);
     if (set_location == NULL) {
         return NGX_ERROR;
     }
 
+	ngx_http_clear_location(r);
  //   set_location->hash = 0; //this messes it up
+	set_location->hash = 1; 
     ngx_str_set(&set_location->key, "Location");
     set_location->value.len = len;
     set_location->value.data = location;
+	*/
+	r->headers_out.location = ngx_list_push(&r->headers_out.headers); 
+	if (r->headers_out.location == NULL) {
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;  
+	}
+	   r->headers_out.location->hash = 1; 
+	     ngx_str_set(&r->headers_out.location->key, "Location"); 
+		  r->headers_out.location->value.len = len; 
+		  r->headers_out.location->value.data = location; 
+
 
 	dd("Location: \"%s\"", location);
 	//r->headers_out.location->value.len = len;
@@ -400,6 +440,8 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
     //r->headers_out.content_type_len = r->headers_out.content_type.len;
     //r->headers_out.content_type_lowcase = NULL;
 */
+
+	/*  
     rc = ngx_http_send_header(r);
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS send header error");
@@ -423,6 +465,15 @@ ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_co
     out.next = NULL;
 
     return ngx_http_output_filter(r, &out);
+	*/
+	/* 
+	dd("Before send headers");
+    rc = ngx_http_send_header(r);
+	dd("After send headers");
+	ngx_http_finalize_request(r, rc);
+	*/
+	return NGX_HTTP_TEMPORARY_REDIRECT;
+
 }
 
 static ngx_int_t
@@ -558,7 +609,8 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 	
 	sc->request_type = NGX_HTTP_SDDNS_REQ_CODE_CTRL; 
 //return NGX_OK;
-	return ngx_http_sddns_content_handler_ctrl(r, sc);
+	//return ngx_http_sddns_content_handler_ctrl(r, sc);
+return ngx_http_sddns_ctrl_response(r, sc);
 }
 
 static ngx_http_sddns_client_node_t * 
@@ -837,12 +889,14 @@ ngx_http_sddns_client_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *
 	}
 
 
-	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS id found");
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS ID found, allow request");
 
 
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 			  "SDDNS ID retrieved \"%V\"",
 			  &cn->client_id);
+
+	ngx_http_sddns_set_cookie(r, sc, cookie_id, 0);
 	return NGX_OK;
 
 }
@@ -858,6 +912,7 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	size_t							len;
 	//mpz_t op;
 	u_long ip;
+	u_char *token;
 
 	//ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS No cookie found");
 	ip = ngx_http_sddns_addr(r);
@@ -872,12 +927,14 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	if (id == NULL) {
 		ngx_http_sddns_generate_client_id(client_id.data, NGX_HTTP_SDDNS_ID_LEN);
 		dd("Session ID len=%zu", client_id.len);
+		/*  
 		u_char *p;
 		u_char buf[client_id.len*2];
 		p = ngx_hex_dump(buf, client_id.data, client_id.len);
 		*p = '\0';
 		dd("HEX DUMP \"%s\"", buf);
-
+		*/
+		print_hex(r->pool, client_id.data, client_id.len);
 
 	} else {
 		(void)ngx_copy(client_id.data, id->data, id->len);
@@ -887,17 +944,24 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	//mpz_init(op);
 	//mpz_set_ui(op, NGX_HTTP_SDDNS_IV_LEN + NGX_HTTP_SDDNS_TAG_LEN + NGX_HTTP_SDDNS_ID_LEN + 4);
 	len =  (int)ceil(NGX_HTTP_SDDNS_IPV4_TOKEN_LEN * 8 / (log(36)/log(2)));//mpz_sizeinbase(op, 36);
-	dd("b36 len %zu", len);
-	client_token.len = len; //for ipv4
-	client_token.data = ngx_pnalloc(r->pool, client_token.len);
-	if (client_token.data == NULL){
+	dd("b36 encoding max len %zu", len);
+	dd("Creating token");
+	token = ngx_http_sddns_create_token(r->pool, sc->enc_secret, client_id, ip);
+	if (token == NULL){
 		return NGX_ERROR;
 	}
-	dd("Creating token");
+	/*  
 	if(ngx_http_sddns_create_token(r->pool, sc->enc_secret, client_id, ip, &client_token) != NGX_OK){
 		dd("Token creation failed");
 		return NGX_ERROR;
 	}
+	*/
+	client_token.len = ngx_strlen(token); // str_len doesnt include null in count, token includes null terminator//for ipv4
+	client_token.data = ngx_pnalloc(r->pool, client_token.len);
+	if (client_token.data == NULL){
+		return NGX_ERROR;
+	}
+	ngx_memcpy(client_token.data, token, client_token.len);
 
 
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS token \"%V\"", &client_token);
@@ -911,6 +975,7 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	ngx_encode_base64(&client_id_b64, &client_id); 
 
 	dd("B64 Client ID=\"%s\"", client_id_b64.data);
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS B64 Client ID \"%V\" len: \"%zu\"", &client_id_b64, client_id_b64.len);
 
 	dd("Setting cookie");
 	//set cookie
@@ -936,7 +1001,7 @@ ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc,
 	sc->request_type = NGX_HTTP_SDDNS_REQ_CODE_INIT;
 
 	//return NGX_OK;
-	return ngx_http_sddns_content_handler_init(r, sc);
+	return ngx_http_sddns_content_handler_init(r, sc, client_token);
 }
 static ngx_int_t
 ngx_http_sddns_set_cookie(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *conf, ngx_str_t cookie_value, int http_only){
@@ -1137,9 +1202,9 @@ ngx_http_sddns_generate_client_id(u_char * id, int len){
 	}
 	return NGX_OK;
 }
-
-static ngx_int_t
-ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id, u_long ip, ngx_str_t * client_token){
+u_char*
+//static ngx_int_t
+ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id, u_long ip) {//, ngx_str_t * client_token){
 	//TODO mods for ipv6
 	ngx_str_t	plaintext;
 	u_char		*iv;
@@ -1150,15 +1215,18 @@ ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id
 	u_char		ip_buf[4];
 	u_char		*token_b36;
 	
+
+	//Create IV
 	iv = ngx_pnalloc(pool, NGX_HTTP_SDDNS_IV_LEN);
 	if (iv == NULL){
-		return NGX_ERROR;
+		return NULL;// NGX_ERROR;
 	}
   	if (!RAND_bytes(iv, NGX_HTTP_SDDNS_IV_LEN)){
-		return NGX_ERROR;
+		return NULL;//NGX_ERROR;
 	}
 	dd("IV");
 	print_hex(pool, iv, NGX_HTTP_SDDNS_IV_LEN);
+
 
 	u_char *s_ip = (u_char *)&ip;
 	ngx_memcpy(ip_buf, (u_char *)&ip, 4);
@@ -1166,7 +1234,7 @@ ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id
 	plaintext.len = 4 + NGX_HTTP_SDDNS_ID_LEN;
 	plaintext.data = ngx_palloc(pool, plaintext.len);
 	if (plaintext.data == NULL){
-		return NGX_ERROR;
+		return NULL;//NGX_ERROR;
 	}
 	p = ngx_copy(plaintext.data, s_ip, 4);
 	ngx_memcpy(p, client_id.data, client_id.len);
@@ -1182,22 +1250,11 @@ ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id
 	dd("Ciphertext");
 	print_hex(pool, ct, plaintext.len);
 
-/*  	
-	ngx_str_t hexstr = ngx_string("7a");
-
-	ngx_str_t o;
-	o.len = ngx_strlen(hexstr.data)/2;
-	o.data =  ngx_pnalloc(pool, o.len);
-	ngx_http_sddns_hex_to_string(o.data, hexstr.data);
-	dd("hex to string \"%s\"", o.data);
-	dd("Printing string to hex");
-	print_hex(pool, o.data, o.len);
-*/
 //TODO The client token is wrong, it is the iv+tag+ct, the lengths are wrong	
 //
 	token = ngx_palloc(pool,  NGX_HTTP_SDDNS_IPV4_TOKEN_LEN);
 	if (token == NULL){
-		return NGX_ERROR;
+		return NULL;//NGX_ERROR;
 	}
 	p1 = ngx_copy(token, iv, NGX_HTTP_SDDNS_IV_LEN);
 	p1 = ngx_copy(p1, tag, NGX_HTTP_SDDNS_TAG_LEN);
@@ -1208,8 +1265,9 @@ ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id
 
 	token_b36 = ngx_http_sddns_b36_encode(token, NGX_HTTP_SDDNS_IPV4_TOKEN_LEN);
 	dd("Token b36 \"%s\"", token_b36 );
-	ngx_memcpy(client_token->data, token_b36, client_token->len) ;
-	return NGX_OK;
+//	ngx_memcpy(client_token->data, token_b36, client_token->len) ;
+//	return NGX_OK;
+	return token_b36;
 }
 /* *
  * size_t len Size of binary data src */
@@ -1226,6 +1284,7 @@ u_char* ngx_http_sddns_b36_encode(u_char *src, size_t len)
 	mpz_init(nr);
 	mpz_set_str(nr, (char *)hex, 16);
 	dd("String \"%s\"", mpz_get_str(NULL, 36, nr));
+	//RETURNED WITH NULL CHAR!
 	return (u_char *)mpz_get_str(NULL, 36, nr);
 }
 

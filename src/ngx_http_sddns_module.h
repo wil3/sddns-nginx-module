@@ -9,6 +9,7 @@
 #define  NGX_HTTP_SDDNS_REQ_CODE_NORMAL 0 
 #define  NGX_HTTP_SDDNS_REQ_CODE_CTRL 	1 
 #define  NGX_HTTP_SDDNS_REQ_CODE_INIT 	2 
+//#define  NGX_HTTP_SDDNS_REQ_CODE_NORMAL 	3 
 
 typedef struct {
 	ngx_flag_t						enable;
@@ -44,6 +45,9 @@ typedef struct {
     ngx_str_t                 address;
 	int						  allow;
 } ngx_http_sddns_client_node_t;
+
+static ngx_int_t
+ngx_http_sddns_ctrl_response(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
 
 static void *
 ngx_http_sddns_create_srv_conf(ngx_conf_t *cf);
@@ -96,8 +100,9 @@ ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t
 
 
 
-static ngx_int_t
-ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id, u_long ip, ngx_str_t * client_token);
+u_char*
+//static ngx_int_t
+ngx_http_sddns_create_token(ngx_pool_t *pool, ngx_str_t key, ngx_str_t client_id, u_long ip);//, ngx_str_t * client_token);
 
 //static ngx_int_t 
 //ngx_http_sddns_get_rand_bytes(ngx_pool_t *pool, u_char *buf, int len);
@@ -137,10 +142,10 @@ ngx_http_sddns_generate_client_id(u_char * id, int len);
 static ngx_int_t
 ngx_http_sddns_init_client(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc, ngx_str_t *id);
 
+//static ngx_int_t
+//ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
 static ngx_int_t
-ngx_http_sddns_content_handler_ctrl(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
-static ngx_int_t
-ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc);
+ngx_http_sddns_content_handler_init(ngx_http_request_t *r, ngx_http_sddns_srv_conf_t *sc, ngx_str_t token);
 
 static ngx_http_sddns_client_node_t * 
 ngx_http_sddns_whitelist_remove(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt);
