@@ -595,7 +595,9 @@ ngx_http_sddns_controller_handler(ngx_http_request_t *r, ngx_http_sddns_srv_conf
 
 	} else if (ngx_strncmp(action.data, "block", 5) == 0){
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "SDDNS BLOCK the client");
-		ngx_http_sddns_whitelist_remove(r, cn);
+		if (cn != NULL){
+			ngx_http_sddns_whitelist_remove(r, cn);
+		}
 	} else {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "Unknown action");
 
@@ -670,7 +672,7 @@ ngx_http_sddns_update_client(ngx_http_request_t *r, ngx_http_sddns_client_node_t
 
 static ngx_http_sddns_client_node_t * 
 ngx_http_sddns_whitelist_remove(ngx_http_request_t *r, ngx_http_sddns_client_node_t *elt){
-	//TODO fix this, this is sloppy need to propery remove
+	//TODO fix this, this is sloppy need to properly remove
 	
 	//ngx_str_null(&elt->address);
 	//ngx_str_null(&elt->client_id);
